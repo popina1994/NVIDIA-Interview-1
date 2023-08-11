@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <limits.h>
 #include <time.h>
+
+
 // dimx is a number of columns
 // dimy is a number of rows
 bool checkResults (float *gold, float *d_data, int dimx, int dimy, float rel_tol) {
@@ -76,13 +78,10 @@ void computeCpuResults(float *g_data, int dimx, int dimy, int niterations, int n
 
 __global__ void kernel_A1(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
 {
-	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
-	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
 	int idx;
 	float value;
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
 	{
-		//printf("ix: %d %d %d \n", ix, blockIdx.x, threadIdx.x); 
 		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4; ix < dimx; ix += xInc)
 		{
 			idx = iy * dimx + ix;
@@ -102,8 +101,6 @@ __global__ void kernel_A1(float *g_data, const int dimx, const int dimy, const i
 
 __global__ void kernel_A2(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
 {
-	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
-	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
 	int idx;
 	float value;
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
@@ -125,8 +122,6 @@ __global__ void kernel_A2(float *g_data, const int dimx, const int dimy, const i
 
 __global__ void kernel_A3(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
 {
-	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
-	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
 	int idx;
 	float value;
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
@@ -148,8 +143,6 @@ __global__ void kernel_A3(float *g_data, const int dimx, const int dimy, const i
 
 __global__ void kernel_A4(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
 {
-	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
-	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
 	int idx;
 	float value;
 	
@@ -275,22 +268,32 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties(&prop, 0);
 	int num_sms = prop.multiProcessorCount;
-
+	/* This implementation prevents thread divergences, thus the speed up is equivalent to the number of 
+	    different possible thread outcomes evaluated. However, it does not exploit L1 cache. 
+	   */
 	if (IMPL == 0)
 	{
 		dim3 block(1, 128);
 		dim3 grid(1, num_sms);
 		kernel_A<<<grid, block>>>(d_data, dimx, dimy, niterations);
 	}
-	/* This implemenetaion trys to exploit L1 cache that loads blocks of continious memory locations 
-	  in L1 cachde and that are accessed by the same threads. I broke this in 4 kernel calls to  reduces thread divergence as much as possible. 
-	  The next 
-
+	/* This implemenetaion tries to exploit L1 cache that loads blocks of continious memory locations 
+	  in L1 cachde and that are accessed by the threads from the same block. I broke this in 4 kernel calls to  reduces thread divergence. 
+	  The size of the block for x is the biggest possible to exploit the cache as much as posssible. I noticed the trend as
+	  I increased block size thta the runtime decreased. The reasoning is that there are only 5 register used by threads, 
+	  thus for each block everything can fit L1 of one SM
+	  I also tried to exploit the property that the memory is row-major order by iterating first over xs and then over y.
+	  with four consecutive kernes, this prevents memory being dirtied by adjacents blocks.
+	  Later I improved this to chaning 4 grids that evaluate different code depending on the grid number
+	  (all threads in the same block will evaluate the same ocde
+	  I changed the signature of the function to exploit the constant cache since these variables can be computed only once.
 	   */
 	else if (IMPL == 1)
 	{
-		dim3 block(1024, 1);
-		dim3 grid(1, num_sms);
+		int xBlock = X_BLOCK;
+		int yGrid = Y_GRID;
+		dim3 block(xBlock, 1);
+		dim3 grid(1, yGrid);
 
 		kernel_A1<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
 		kernel_A2<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
