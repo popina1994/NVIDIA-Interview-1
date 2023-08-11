@@ -73,6 +73,102 @@ void computeCpuResults(float *g_data, int dimx, int dimy, int niterations, int n
 	}
 }
 
+
+__global__ void kernel_A1(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
+{
+	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
+	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
+	int idx;
+	float value;
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
+	{
+		//printf("ix: %d %d %d \n", ix, blockIdx.x, threadIdx.x); 
+		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4; ix < dimx; ix += xInc)
+		{
+			idx = iy * dimx + ix;
+			value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++)
+			{
+				value += sqrtf(logf(value) + 1.f);
+			}
+			g_data[idx] = value;
+		}
+	}
+}
+
+
+
+
+__global__ void kernel_A2(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
+{
+	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
+	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
+	int idx;
+	float value;
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
+	{
+		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4 + 1; ix < dimx; ix += xInc)
+		
+		{
+			idx = iy * dimx + ix;
+			value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++)
+			{
+				value += sqrtf(cosf(value) + 1.f);
+			}
+			g_data[idx] = value;
+		}
+	}
+}
+
+__global__ void kernel_A3(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
+{
+	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
+	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
+	int idx;
+	float value;
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
+	{
+		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4 + 2; ix < dimx; ix += xInc)
+		{
+			idx = iy * dimx + ix;
+			value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++)
+			{
+				value += sqrtf(sinf(value) + 1.f);
+			}
+			g_data[idx] = value;
+		}
+	}
+}
+	
+
+__global__ void kernel_A4(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc)
+{
+	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
+	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
+	int idx;
+	float value;
+	
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
+	{
+		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4 + 3; ix < dimx; ix += xInc)
+		{
+			idx = iy * dimx + ix;
+			value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++)
+			{
+				value += sqrtf(tanf(value) + 1.f);
+			}
+			g_data[idx] = value;
+		}
+	}
+}
+
 __global__ void kernel_A(float *g_data, const int dimx, const int dimy, const int niterations)
 {
 	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
@@ -167,6 +263,9 @@ __global__ void kernel_A(float *g_data, const int dimx, const int dimy, const in
 }
 
 
+int IMPL = 1;
+
+
 void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 {
 	// Only change the contents of this function and the kernel(s). You may
@@ -177,9 +276,27 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 	cudaGetDeviceProperties(&prop, 0);
 	int num_sms = prop.multiProcessorCount;
 
-	dim3 block(1, 128);
-	dim3 grid(1, num_sms);
-	kernel_A<<<grid, block>>>(d_data, dimx, dimy, niterations);
+	if (IMPL == 0)
+	{
+		dim3 block(1, 128);
+		dim3 grid(1, num_sms);
+		kernel_A<<<grid, block>>>(d_data, dimx, dimy, niterations);
+	}
+	/* This implemenetaion trys to exploit L1 cache that loads blocks of continious memory locations 
+	  in L1 cachde and that are accessed by the same threads. I broke this in 4 kernel calls to  reduces thread divergence as much as possible. 
+	  The next 
+
+	   */
+	else if (IMPL == 1)
+	{
+		dim3 block(1024, 1);
+		dim3 grid(1, num_sms);
+
+		kernel_A1<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+		kernel_A2<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+		kernel_A3<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+		kernel_A4<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+	}
 }
 
 float timing_experiment(float *d_data, int dimx, int dimy, int niterations, int nreps)
