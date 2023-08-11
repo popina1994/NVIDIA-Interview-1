@@ -291,9 +291,13 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 		dim3 grid(1, num_sms);
 
 		kernel_A1<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+		cudaDeviceSynchronize();
 		kernel_A2<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+		cudaDeviceSynchronize();
 		kernel_A3<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+		cudaDeviceSynchronize();
 		kernel_A4<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+
 	
 	}
 	/* Thi sis a unified call of all 4 kernels from one parent kernel*/
