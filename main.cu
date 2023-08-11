@@ -3,6 +3,19 @@
 #include <time.h>
 
 
+#ifndef IMPLEM
+#define IMPLEM 2
+#endif
+const int IMPL = IMPLEM;
+
+#ifndef X_BLOCK
+#define X_BLOCK 1024
+#endif
+#ifndef Y_GRID
+#define Y_GRID 68
+#endif
+      
+
 // dimx is a number of columns
 // dimy is a number of rows
 bool checkResults (float *gold, float *d_data, int dimx, int dimy, float rel_tol) {
@@ -82,7 +95,7 @@ __global__ void kernel_A1(float *g_data, const int dimx, const int dimy, const i
 	float value;
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
 	{
-		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4; ix < dimx; ix += xInc)
+		for (int ix = threadIdx.x * 4; ix < dimx; ix += xInc)
 		{
 			idx = iy * dimx + ix;
 			value = g_data[idx];
@@ -105,7 +118,7 @@ __global__ void kernel_A2(float *g_data, const int dimx, const int dimy, const i
 	float value;
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
 	{
-		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4 + 1; ix < dimx; ix += xInc)
+		for (int ix = threadIdx.x * 4 + 1; ix < dimx; ix += xInc)
 		
 		{
 			idx = iy * dimx + ix;
@@ -126,7 +139,7 @@ __global__ void kernel_A3(float *g_data, const int dimx, const int dimy, const i
 	float value;
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
 	{
-		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4 + 2; ix < dimx; ix += xInc)
+		for (int ix = threadIdx.x * 4 + 2; ix < dimx; ix += xInc)
 		{
 			idx = iy * dimx + ix;
 			value = g_data[idx];
@@ -148,7 +161,7 @@ __global__ void kernel_A4(float *g_data, const int dimx, const int dimy, const i
 	
 	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += yInc)
 	{
-		for (int ix = blockIdx.x * blockDim.x + threadIdx.x * 4 + 3; ix < dimx; ix += xInc)
+		for (int ix = threadIdx.x * 4 + 3; ix < dimx; ix += xInc)
 		{
 			idx = iy * dimx + ix;
 			value = g_data[idx];
@@ -162,10 +175,21 @@ __global__ void kernel_A4(float *g_data, const int dimx, const int dimy, const i
 	}
 }
 
+
+__global__ void kernel_AJoin(float *g_data, const int dimx, const int dimy, const int niterations, const int xInc, const int yInc, 
+		const int numSms, const int numXBlocks)
+{
+	dim3 block(numXBlocks, 1);
+	dim3 grid(1, numSms);
+	kernel_A1<<<grid, block>>>(g_data, dimx, dimy, niterations, xInc, yInc);
+	kernel_A2<<<grid, block>>>(g_data, dimx, dimy, niterations, xInc, yInc);
+	kernel_A3<<<grid, block>>>(g_data, dimx, dimy, niterations, xInc, yInc);
+	kernel_A4<<<grid, block>>>(g_data, dimx, dimy, niterations, xInc, yInc);
+}
+
+
 __global__ void kernel_A(float *g_data, const int dimx, const int dimy, const int niterations)
 {
-	//printf("blockDim.y %d blockIdx.y %d threadIdx.y %d \n", blockDim.y, blockIdx.y, threadIdx.y);
-	//printf("blockDim.x %d blockIdx.y %d threadIdx.x %d \n", blockDim.x, blockIdx.x, threadIdx.x);
 	int idx;
 	float value;
 	for (int ix = blockIdx.x * blockDim.x + threadIdx.x; ix < dimx; ix += blockDim.x * gridDim.x)
@@ -226,44 +250,14 @@ __global__ void kernel_A(float *g_data, const int dimx, const int dimy, const in
 				g_data[idx] = value;
 			}
 		}
-		/*
-		   for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += blockDim.y * gridDim.y)
-		   {
-		   int idx = iy * dimx + ix;
-		   //printf("%d\n", idx);
-		   float value = g_data[idx];
-
-		   for (int i = 0; i < niterations; i++)
-		   {
-		   if (ix % 4 == 0)
-		   {
-		   value += sqrtf(logf(value) + 1.f);
-		   } else if (ix % 4 == 1)
-		   {
-		   value += sqrtf(cosf(value) + 1.f);
-		   } else if (ix % 4 == 2)
-		   {
-		   value += sqrtf(sinf(value) + 1.f);
-		   } else if (ix % 4 == 3)
-		   {
-		   value += sqrtf(tanf(value) + 1.f);
-		   }
-		   }
-		   g_data[idx] = value;
-		   }
-		   */
 	}
 }
-
-
-int IMPL = 1;
 
 
 void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 {
 	// Only change the contents of this function and the kernel(s). You may
 	// change the kernel's function signature as you see fit.
-
 	//query number of SMs
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties(&prop, 0);
@@ -291,15 +285,29 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 	else if (IMPL == 1)
 	{
 		int xBlock = X_BLOCK;
-		int yGrid = Y_GRID;
+		//int yGrid = Y_GRID;
+		int yGrid = num_sms;
 		dim3 block(xBlock, 1);
-		dim3 grid(1, yGrid);
+		dim3 grid(1, num_sms);
 
 		kernel_A1<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
 		kernel_A2<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
 		kernel_A3<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
 		kernel_A4<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
+	
 	}
+	/* Thi sis a unified call of all 4 kernels from one parent kernel*/
+	else if (IMPL == 2)
+	{
+		int xBlock = X_BLOCK;
+		dim3 blockDummy(1, 1);
+		dim3 gridDummy(1, 1);
+		dim3 block(xBlock, 1);
+		dim3 grid(1, num_sms);
+
+		kernel_AJoin<<<gridDummy, blockDummy>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y, num_sms, xBlock);
+	}
+
 }
 
 float timing_experiment(float *d_data, int dimx, int dimy, int niterations, int nreps)
