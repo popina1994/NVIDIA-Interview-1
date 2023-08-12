@@ -263,6 +263,10 @@ __global__ void kernel_ASharedMemory(float *g_data, const int dimx, const int di
 		for (int blockEnum = 0; blockEnum < dimx / (blockDim.x * 4); blockEnum++)
 		{
 			int ix = blockEnum * blockDim.x * 4 + threadIdx.x * 4;
+			if (ix >= dimx)
+			{
+				continue;
+			}
 			int idx = iy * dimx + ix;
 		
 			for (int i = 0; i < 4; i ++)
@@ -314,30 +318,44 @@ __global__ void kernel_ASharedMemory(float *g_data, const int dimx, const int di
 }
 
 
-__global__ void kernel_ACleanUnrolling(float *g_data, const int dimx, const int dimy, const int niterations)
+__global__ void kernel_ACleanUnrolling(float *g_data, const int dimx, const int dimy, const int niterations, 
+		const int incx, const int incy)
 {
 	int idx;
 	float value;
-	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy;
-			iy += blockDim.y * gridDim.y) {
-		for (int blockEnum = 0; blockEnum < dimx / (blockDim.x * 4); blockEnum++)
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy; iy += incy) 
+	{
+		for (int blockEnum = 0; blockEnum < dimx / incx; blockEnum++)
 		{
-			int ix = blockEnum * blockDim.x * 4 + threadIdx.x * 4;
-			int idx = iy * dimx + ix;
+			int ix = blockEnum * incx + threadIdx.x * 4;
+			idx = iy * dimx + ix;
+			if (ix >= dimx)
+			{
+				continue;
+			}
 
-			float value = g_data[idx];
+			value = g_data[idx];
 
 			for (int i = 0; i < niterations; i++) {
 				value += sqrtf(logf(value) + 1.f);
 			}
 			g_data[idx] = value;
 			idx ++;
+			if (ix + 1 >= dimx)
+			{
+				continue;
+			}
 			value = g_data[idx];
 
 			for (int i = 0; i < niterations; i++) {
 				value += sqrtf(cosf(value) + 1.f);
 			}
+			
 			g_data[idx] = value;
+			if (ix + 2 >= dimx)
+			{
+				continue;
+			}	
 			idx ++;
 			value  = g_data[idx];
 
@@ -346,6 +364,10 @@ __global__ void kernel_ACleanUnrolling(float *g_data, const int dimx, const int 
 			}
 			g_data[idx] = value;
 			idx ++;
+			if (ix +3 >= dimx)
+			{
+				continue;
+			}
 			value = g_data[idx];
 
 			for (int i = 0; i < niterations; i++) {
@@ -381,7 +403,18 @@ __global__ void kernel_AUnopt(float *g_data, int dimx, int dimy, int niterations
 		}
 	}
 }
+/* GPU Specs NVIDIA 3080 (68SMs). 
+   Runtimes for different implementations:
+     IMPL   | Runtime Cuda
+       -1   |  30.81ms
+        0   |  7.24ms
+	1   |  3.22ms
+	2   |  3.24ms
+	3   |  1.51ms
+	4   |  1.23ms
+    I list the explanation of each of the codes and specific speedups in further text.
 
+   */
 void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 {
 	// Only change the contents of this function and the kernel(s). You may
@@ -390,6 +423,7 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties(&prop, 0);
 	int num_sms = prop.multiProcessorCount;
+	/* Initial implementation */
 	if (IMPL == -1)
 	{
 		dim3 block(1, 32);
@@ -443,17 +477,21 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 
 		kernel_AJoin<<<gridDummy, blockDummy>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y, num_sms, xBlock);
 	}
+	/* This is the most ambitious code that combines removing thread diveregence while trying to exploit memory coallecing by reading
+  	   all global locations in L2 cache. Although in theory can optimize since all reads and writes to the global memory can be mapped to SIMD,
+	  it does not optimize as expected due to: bank conflicts due to loop unrolling, and thread synchronizations.  */
 	else if (IMPL == 3)
 	{
 		dim3 block(1024, 1);
 		dim3 grid(1, num_sms);
 		kernel_ASharedMemory<<<grid, block, 1024 * 4 * sizeof(float)>>>(d_data, dimx, dimy, niterations);
 	}
+	/* This is a relatively naive version that does loop unrolling to prevent thread divergence, and achievees the best runtimes. */
 	else if (IMPL == 4)
 	{
 		dim3 block(1024, 1);
 		dim3 grid(1, num_sms);
-		kernel_ACleanUnrolling<<<grid, block>>>(d_data, dimx, dimy, niterations);
+		kernel_ACleanUnrolling<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
 	}
 
 }
