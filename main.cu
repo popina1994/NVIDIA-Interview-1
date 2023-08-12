@@ -4,7 +4,7 @@
 
 
 #ifndef IMPLEM
-#define IMPLEM 2
+#define IMPLEM 4
 #endif
 const int IMPL = IMPLEM;
 
@@ -253,6 +253,134 @@ __global__ void kernel_A(float *g_data, const int dimx, const int dimy, const in
 	}
 }
 
+__global__ void kernel_ASharedMemory(float *g_data, const int dimx, const int dimy, const int niterations)
+{
+	int idx;
+	float value;
+	extern __shared__ float  c_data[];
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy;
+			iy += blockDim.y * gridDim.y) {
+		for (int blockEnum = 0; blockEnum < dimx / (blockDim.x * 4); blockEnum++)
+		{
+			int ix = blockEnum * blockDim.x * 4 + threadIdx.x * 4;
+			int idx = iy * dimx + ix;
+		
+			for (int i = 0; i < 4; i ++)
+			{	
+				c_data[ i * blockDim.x  + threadIdx.x] = g_data[iy * dimx +  blockEnum * blockDim.x * 4 + i * blockDim.x + threadIdx.x];
+			}	
+			__syncthreads();
+
+			//float value = g_data[idx];
+			float value = c_data[threadIdx.x * 4];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(logf(value) + 1.f);
+			}
+			//g_data[idx] = value;
+			c_data[threadIdx.x * 4] = value;
+			//idx ++;
+			value = c_data[threadIdx.x * 4 + 1];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(cosf(value) + 1.f);
+			}
+			//g_data[idx] = value;
+			c_data[threadIdx.x * 4 +1] = value;
+			//idx ++;
+			value = c_data[threadIdx.x * 4 + 2];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(sinf(value) + 1.f);
+			}
+			//g_data[idx] = value;
+			c_data[threadIdx.x * 4 + 2] = value;
+			//idx ++;
+			value = c_data[threadIdx.x * 4 + 3];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(tanf(value) + 1.f);
+			}
+			//g_data[idx] = value;
+			c_data[threadIdx.x * 4 + 3] = value;
+			__syncthreads();
+			for (int i = 0; i < 4; i ++)
+			{
+				g_data[iy * dimx + blockEnum * blockDim.x * 4 + i * blockDim.x + threadIdx.x] = c_data[i *  blockDim.x + threadIdx.x];
+			}
+			__syncthreads();
+		}
+	}
+}
+
+
+__global__ void kernel_ACleanUnrolling(float *g_data, const int dimx, const int dimy, const int niterations)
+{
+	int idx;
+	float value;
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy;
+			iy += blockDim.y * gridDim.y) {
+		for (int blockEnum = 0; blockEnum < dimx / (blockDim.x * 4); blockEnum++)
+		{
+			int ix = blockEnum * blockDim.x * 4 + threadIdx.x * 4;
+			int idx = iy * dimx + ix;
+
+			float value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(logf(value) + 1.f);
+			}
+			g_data[idx] = value;
+			idx ++;
+			value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(cosf(value) + 1.f);
+			}
+			g_data[idx] = value;
+			idx ++;
+			value  = g_data[idx];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(sinf(value) + 1.f);
+			}
+			g_data[idx] = value;
+			idx ++;
+			value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++) {
+				value += sqrtf(tanf(value) + 1.f);
+			}
+			g_data[idx] = value;
+		}
+	}
+}
+
+
+__global__ void kernel_AUnopt(float *g_data, int dimx, int dimy, int niterations) {
+	for (int iy = blockIdx.y * blockDim.y + threadIdx.y; iy < dimy;
+			iy += blockDim.y * gridDim.y) {
+		for (int ix = blockIdx.x * blockDim.x + threadIdx.x; ix < dimx;
+				ix += blockDim.x * gridDim.x) {
+			int idx = iy * dimx + ix;
+
+			float value = g_data[idx];
+
+			for (int i = 0; i < niterations; i++) {
+				if (ix % 4 == 0) {
+					value += sqrtf(logf(value) + 1.f);
+				} else if (ix % 4 == 1) {
+					value += sqrtf(cosf(value) + 1.f);
+				} else if (ix % 4 == 2) {
+					value += sqrtf(sinf(value) + 1.f);
+				} else if (ix % 4 == 3) {
+					value += sqrtf(tanf(value) + 1.f);
+				}
+			}
+			g_data[idx] = value;
+		}
+	}
+}
 
 void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 {
@@ -262,10 +390,17 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties(&prop, 0);
 	int num_sms = prop.multiProcessorCount;
+	if (IMPL == -1)
+	{
+		dim3 block(1, 32);
+		dim3 grid(1, num_sms);
+		kernel_AUnopt<<<grid, block>>>(d_data, dimx, dimy, niterations);
+	}
+
 	/* This implementation prevents thread divergences, thus the speed up is equivalent to the number of 
 	    different possible thread outcomes evaluated. However, it does not exploit L1 cache. 
 	   */
-	if (IMPL == 0)
+	else if (IMPL == 0)
 	{
 		dim3 block(1, 128);
 		dim3 grid(1, num_sms);
@@ -291,11 +426,8 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 		dim3 grid(1, num_sms);
 
 		kernel_A1<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
-		cudaDeviceSynchronize();
 		kernel_A2<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
-		cudaDeviceSynchronize();
 		kernel_A3<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
-		cudaDeviceSynchronize();
 		kernel_A4<<<grid, block>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y);
 
 	
@@ -310,6 +442,18 @@ void launchKernel(float * d_data, int dimx, int dimy, int niterations)
 		dim3 grid(1, num_sms);
 
 		kernel_AJoin<<<gridDummy, blockDummy>>>(d_data, dimx, dimy, niterations, block.x * 4, block.y * grid.y, num_sms, xBlock);
+	}
+	else if (IMPL == 3)
+	{
+		dim3 block(1024, 1);
+		dim3 grid(1, num_sms);
+		kernel_ASharedMemory<<<grid, block, 1024 * 4 * sizeof(float)>>>(d_data, dimx, dimy, niterations);
+	}
+	else if (IMPL == 4)
+	{
+		dim3 block(1024, 1);
+		dim3 grid(1, num_sms);
+		kernel_ACleanUnrolling<<<grid, block>>>(d_data, dimx, dimy, niterations);
 	}
 
 }
@@ -367,7 +511,6 @@ int main() {
 	cudaMemcpy(d_data, h_gold, nbytes, cudaMemcpyHostToDevice);
 
 	float runtime_cuda = timing_experiment(d_data, dimx, dimy, niterations, 1);
-	printf("Cuda runtime %.3f\n", runtime_cuda);
 	printf("Verifying solution\n");
 
 	cudaMemcpy(h_data, d_data, nbytes, cudaMemcpyDeviceToHost);
